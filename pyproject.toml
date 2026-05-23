@@ -1,0 +1,15 @@
+[project]
+name = "rsi-webhook-trader"
+version = "0.1.0"
+description = "TradingView RSI webhook receiver with Alpaca paper-trading execution"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "alpaca-py>=0.43.0",
+    "pydantic>=2.10.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
