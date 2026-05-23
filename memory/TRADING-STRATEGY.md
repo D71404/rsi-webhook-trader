@@ -7,7 +7,7 @@
 * **Trigger Condition:** RSI is equal to or less than 20% (Oversold condition).
 
 ## 2. Order Execution & Risk Management
-When a webhook trigger is received from TradingView, the bot must immediately execute a LONG position and automate the exit via an internal price watcher:
+The bot utilizes a Python-native market scanner. Every 5 minutes, it fetches the active crypto universe from Alpaca, pulls the latest 5-minute historical bars, and calculates a 14-period RSI using pandas-ta. If any asset's RSI is <= 20, the bot autonomously triggers the Long Entry and background exit watcher. To prevent duplicate orders, the bot must track active symbols and not buy a coin if it is already holding an open position for it.
 
 * **Action:** Buy at Market Price.
 * **Position Size:** Exactly $1,000 USD per trade.
