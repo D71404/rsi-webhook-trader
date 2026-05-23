@@ -64,8 +64,40 @@ def _append_trade_log(ticker: str, action: str, price: float, size: float, notes
             capture_output=True,
         )
         logger.info("Trade committed to git memory.")
+        _git_push()
     except subprocess.CalledProcessError as exc:
         logger.warning("Git commit failed: %s", exc.stderr.decode().strip())
+
+
+def _git_push() -> None:
+    """Push the commit to the remote repository.
+
+    In cloud environments (Railway), uses GITHUB_TOKEN + GITHUB_REPO for
+    authenticated HTTPS push.  Locally, falls back to 'git push origin main'.
+    """
+    token = os.getenv("GITHUB_TOKEN")
+    repo = os.getenv("GITHUB_REPO")  # e.g. "username/repository"
+
+    if token and repo:
+        remote_url = f"https://oauth2:{token}@github.com/{repo}.git"
+        cmd = ["git", "push", remote_url, "main"]
+    else:
+        cmd = ["git", "push", "origin", "main"]
+
+    try:
+        subprocess.run(
+            cmd,
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+        )
+        logger.info("Trade log pushed to remote.")
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode().strip()
+        # Scrub any token that may appear in the error output
+        if token:
+            stderr = stderr.replace(token, "***")
+        logger.warning("Git push failed: %s", stderr)
 
 
 def execute_short(ticker: str, price: float) -> dict:
