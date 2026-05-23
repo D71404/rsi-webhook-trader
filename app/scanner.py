@@ -77,8 +77,11 @@ def _compute_rsi(symbols: list[str]) -> dict[str, float]:
 
     rsi_values: dict[str, float] = {}
     for symbol in symbols:
-        bars = all_bars.get(symbol)
-        if not bars or len(bars) < RSI_PERIOD:
+        try:
+            bars = all_bars[symbol]
+        except KeyError:
+            continue
+        if len(bars) < RSI_PERIOD:
             continue
         closes = pd.Series([float(b.close) for b in bars])
         rsi_series = ta.rsi(closes, length=RSI_PERIOD)
