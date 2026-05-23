@@ -1,9 +1,12 @@
 """
-RSI Webhook Trader — FastAPI server that receives TradingView alerts
-and routes them to the executor for paper-traded crypto positions.
+RSI Webhook Trader — FastAPI server with an autonomous 5-minute
+crypto market scanner and a manual webhook endpoint for testing.
 """
 
+import asyncio
+import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -14,8 +17,23 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from app.executor import execute_entry, open_positions_count, watch_and_exit
+from app.scanner import run_market_scanner
 
-app = FastAPI(title="RSI Webhook Trader", version="0.2.0")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Spawn the background market scanner on startup."""
+    task = asyncio.create_task(run_market_scanner())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="RSI Webhook Trader", version="0.3.0", lifespan=lifespan)
 
 PASSPHRASE = os.getenv("WEBHOOK_PASSPHRASE", "changeme")
 
