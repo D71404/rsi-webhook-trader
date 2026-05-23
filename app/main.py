@@ -24,7 +24,7 @@ class WebhookPayload(BaseModel):
     passphrase: str
     ticker: str
     action: str  # "buy" for LONG entries
-    price: float
+    price: float | None = None
 
 
 @app.get("/health")
