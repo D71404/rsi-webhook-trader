@@ -21,6 +21,7 @@ from alpaca.trading.enums import AssetClass, AssetStatus
 from alpaca.trading.requests import GetAssetsRequest
 
 from app.executor import _get_client, execute_entry, watch_and_exit
+from app.state_manager import state_manager
 
 logger = logging.getLogger(__name__)
 
@@ -120,10 +121,14 @@ async def run_market_scanner() -> None:
 
     while True:
         try:
+            # Update scanner status
+            state_manager.update_scanner_status("scanning")
+
             symbols = _get_tradable_symbols()
             logger.info("Scanning %d crypto symbols…", len(symbols))
 
             rsi_values = _compute_rsi(symbols)
+            signals_found = sum(1 for rsi in rsi_values.values() if rsi <= RSI_THRESHOLD)
 
             for symbol, rsi in rsi_values.items():
                 if rsi > RSI_THRESHOLD:
@@ -160,7 +165,11 @@ async def run_market_scanner() -> None:
                     symbol, result["take_profit_price"], result["stop_loss_price"],
                 )
 
+            # Log scan results
+            state_manager.log_scan_result(len(symbols), signals_found)
+
         except Exception as exc:
             logger.error("Scanner cycle failed: %s", exc, exc_info=True)
+            state_manager.update_scanner_status("error")
 
         await asyncio.sleep(SCAN_INTERVAL)

@@ -20,6 +20,8 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
 
+from app.state_manager import state_manager
+
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -190,6 +192,9 @@ def execute_entry(ticker: str) -> dict:
         notes=f"order_id={order_id} TP={take_profit_price} SL={stop_loss_price}",
     )
 
+    # Log to state manager
+    state_manager.log_trade_entry(symbol, qty, entry_price, order_id)
+
     return {
         "status": "filled",
         "order_id": order_id,
@@ -254,13 +259,18 @@ def watch_and_exit(
 
         try:
             order = client.submit_order(order_data=order_data)
+            order_id = str(order.id)
             _append_trade_log(
                 ticker=ticker,
                 action="EXIT",
                 price=live_price,
                 size=qty,
-                notes=f"order_id={order.id} reason={exit_reason} entry={entry_price}",
+                notes=f"order_id={order_id} reason={exit_reason} entry={entry_price}",
             )
+
+            # Log to state manager
+            state_manager.log_trade_exit(ticker, qty, live_price, entry_price, exit_reason, order_id)
+
             logger.info("Exited %s at %.2f (%s hit)", ticker, live_price, exit_reason)
         except Exception as exc:
             logger.error("Exit order failed for %s: %s", ticker, exc)

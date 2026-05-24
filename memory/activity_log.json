@@ -1,0 +1,27 @@
+[
+  {
+    "timestamp": "2026-05-24T14:06:27.831880+00:00",
+    "type": "test",
+    "message": "Test activity 1",
+    "details": {
+      "detail": "test1"
+    }
+  },
+  {
+    "timestamp": "2026-05-24T14:06:27.832646+00:00",
+    "type": "test",
+    "message": "Test activity 2",
+    "details": {
+      "detail": "test2"
+    }
+  },
+  {
+    "timestamp": "2026-05-24T14:07:00.749018+00:00",
+    "type": "market_scan",
+    "message": "Scanned 33 symbols, found 0 RSI signals",
+    "details": {
+      "symbols_scanned": 33,
+      "signals_found": 0
+    }
+  }
+]
