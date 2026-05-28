@@ -6,22 +6,135 @@ Maintains in-memory state for the dashboard API endpoint including:
 - Daily P&L calculation
 - Active positions tracking
 - Activity log with 200-item limit
-- Trade history from logged activities
+- Trade history from Alpaca API fills
 """
 
 import json
 import logging
+import os
 import threading
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import requests
+
 logger = logging.getLogger(__name__)
 
 # Activity log file for persistence
 ACTIVITY_LOG_FILE = Path(__file__).resolve().parent.parent / "memory" / "activity_log.json"
 ACTIVITY_LOG_FILE.parent.mkdir(exist_ok=True)
+
+
+def _fetch_alpaca_fills(limit: int = 100) -> List[Dict[str, Any]]:
+    """
+    Fetch FILL activities directly from Alpaca REST API.
+
+    Returns raw fill activities from the broker with fields:
+    - symbol, side, qty, price, transaction_time, order_id, etc.
+    """
+    try:
+        api_key = os.getenv("ALPACA_API_KEY", "")
+        secret_key = os.getenv("ALPACA_SECRET_KEY", "")
+
+        if not api_key or not secret_key:
+            logger.warning("Alpaca API credentials not configured")
+            return []
+
+        # Use paper trading endpoint
+        url = "https://paper-api.alpaca.markets/v2/account/activities/FILL"
+
+        headers = {
+            "APCA-API-KEY-ID": api_key,
+            "APCA-API-SECRET-KEY": secret_key,
+        }
+
+        params = {
+            "page_size": min(limit, 100),  # Max 100 per page
+            "direction": "desc",  # Most recent first
+        }
+
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+
+        fills = response.json()
+        logger.info(f"Fetched {len(fills)} fill activities from Alpaca API")
+        return fills
+
+    except Exception as e:
+        logger.error(f"Failed to fetch fills from Alpaca API: {e}")
+        return []
+
+
+def _reconstruct_trade_history(fills: List[Dict[str, Any]], limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Reconstruct closed trades from raw fill activities.
+
+    Matches sell orders against prior buy orders (FIFO) to calculate:
+    - entry_price, exit_price, realized_pnl
+
+    Returns standardized trade_history format:
+    - symbol, side, entry_price, exit_price, qty, realized_pnl, closed_at
+    """
+    # Group fills by symbol
+    symbol_fills = {}
+
+    for fill in fills:
+        symbol = fill.get("symbol", "")
+        side = fill.get("side", "").lower()
+        qty = float(fill.get("qty", 0))
+        price = float(fill.get("price", 0))
+        timestamp = fill.get("transaction_time", "")
+
+        if not symbol or not side or not qty or not price:
+            continue
+
+        if symbol not in symbol_fills:
+            symbol_fills[symbol] = {"buys": [], "sells": []}
+
+        if side == "buy":
+            symbol_fills[symbol]["buys"].append({
+                "qty": qty,
+                "price": price,
+                "time": timestamp
+            })
+        elif side == "sell":
+            symbol_fills[symbol]["sells"].append({
+                "qty": qty,
+                "price": price,
+                "time": timestamp
+            })
+
+    # Match sells with buys to create closed trades (FIFO)
+    trade_history = []
+
+    for symbol, fills_data in symbol_fills.items():
+        # Sort by timestamp (oldest first for FIFO matching)
+        buys = sorted(fills_data["buys"], key=lambda x: x["time"])
+        sells = sorted(fills_data["sells"], key=lambda x: x["time"])
+
+        # Match each sell with corresponding buy
+        for sell in sells:
+            if buys:
+                buy = buys.pop(0)  # FIFO: take oldest buy
+
+                realized_pnl = (sell["price"] - buy["price"]) * sell["qty"]
+
+                trade_history.append({
+                    "symbol": symbol,
+                    "side": "LONG",  # All trades in this system are LONG
+                    "entry_price": round(buy["price"], 2),
+                    "exit_price": round(sell["price"], 2),
+                    "qty": round(sell["qty"], 8),
+                    "realized_pnl": round(realized_pnl, 2),
+                    "closed_at": sell["time"]
+                })
+
+    # Sort by closed_at descending (most recent first)
+    trade_history.sort(key=lambda x: x["closed_at"], reverse=True)
+
+    return trade_history[:limit]
 
 
 class TradingStateManager:
@@ -175,58 +288,17 @@ class TradingStateManager:
         )
         self.update_scanner_status("completed", datetime.now(timezone.utc))
 
-    def _extract_trade_history(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """
-        Extract closed trade history from activity log.
-
-        Returns a list of dictionaries with standardized keys:
-        - symbol (str)
-        - side (str): "LONG" or "SHORT"
-        - entry_price (float)
-        - exit_price (float)
-        - qty (float)
-        - realized_pnl (float)
-        - closed_at (str): ISO timestamp
-        """
-        trade_history = []
-
-        for activity in self._activity_log:
-            if activity.get("type") == "trade_exit":
-                details = activity.get("details", {})
-
-                # Extract trade information
-                symbol = details.get("ticker", "")
-                qty = details.get("qty", 0.0)
-                exit_price = details.get("price", 0.0)
-                entry_price = details.get("entry_price", 0.0)
-                pnl = details.get("pnl", 0.0)
-                closed_at = activity.get("timestamp", "")
-
-                # Only include valid trades with complete data
-                if symbol and qty and exit_price and entry_price:
-                    trade_history.append({
-                        "symbol": symbol,
-                        "side": "LONG",  # All trades in this system are LONG positions
-                        "entry_price": round(entry_price, 2),
-                        "exit_price": round(exit_price, 2),
-                        "qty": round(qty, 8),
-                        "realized_pnl": round(pnl, 2),
-                        "closed_at": closed_at
-                    })
-
-        # Return most recent trades (already sorted by timestamp in activity log)
-        return trade_history[-limit:] if len(trade_history) > limit else trade_history
-
     def get_dashboard_data(self) -> Dict[str, Any]:
         """Get all dashboard data as a dictionary."""
         with self._lock:
-            # Extract trade history from activity log
-            trade_history = self._extract_trade_history(limit=50)
+            # Fetch fills from Alpaca API and reconstruct trade history
+            fills = _fetch_alpaca_fills(limit=100)
+            trade_history = _reconstruct_trade_history(fills, limit=50)
 
             return {
                 **self._state.copy(),
                 "activity_log": list(self._activity_log)[-50:],  # Return last 50 items for API
-                "trade_history": trade_history,  # Include closed trades
+                "trade_history": trade_history,  # Include closed trades from API
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
 
