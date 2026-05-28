@@ -6,6 +6,7 @@ Maintains in-memory state for the dashboard API endpoint including:
 - Daily P&L calculation
 - Active positions tracking
 - Activity log with 200-item limit
+- Trade history from logged activities
 """
 
 import json
@@ -174,12 +175,58 @@ class TradingStateManager:
         )
         self.update_scanner_status("completed", datetime.now(timezone.utc))
 
+    def _extract_trade_history(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Extract closed trade history from activity log.
+
+        Returns a list of dictionaries with standardized keys:
+        - symbol (str)
+        - side (str): "LONG" or "SHORT"
+        - entry_price (float)
+        - exit_price (float)
+        - qty (float)
+        - realized_pnl (float)
+        - closed_at (str): ISO timestamp
+        """
+        trade_history = []
+
+        for activity in self._activity_log:
+            if activity.get("type") == "trade_exit":
+                details = activity.get("details", {})
+
+                # Extract trade information
+                symbol = details.get("ticker", "")
+                qty = details.get("qty", 0.0)
+                exit_price = details.get("price", 0.0)
+                entry_price = details.get("entry_price", 0.0)
+                pnl = details.get("pnl", 0.0)
+                closed_at = activity.get("timestamp", "")
+
+                # Only include valid trades with complete data
+                if symbol and qty and exit_price and entry_price:
+                    trade_history.append({
+                        "symbol": symbol,
+                        "side": "LONG",  # All trades in this system are LONG positions
+                        "entry_price": round(entry_price, 2),
+                        "exit_price": round(exit_price, 2),
+                        "qty": round(qty, 8),
+                        "realized_pnl": round(pnl, 2),
+                        "closed_at": closed_at
+                    })
+
+        # Return most recent trades (already sorted by timestamp in activity log)
+        return trade_history[-limit:] if len(trade_history) > limit else trade_history
+
     def get_dashboard_data(self) -> Dict[str, Any]:
         """Get all dashboard data as a dictionary."""
         with self._lock:
+            # Extract trade history from activity log
+            trade_history = self._extract_trade_history(limit=50)
+
             return {
                 **self._state.copy(),
                 "activity_log": list(self._activity_log)[-50:],  # Return last 50 items for API
+                "trade_history": trade_history,  # Include closed trades
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
 
